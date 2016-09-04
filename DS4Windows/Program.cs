@@ -21,6 +21,7 @@ namespace DS4Windows
         // into view, of course. 
         private static String SingleAppComEventName = "{a52b5b20-d9ee-4f32-8518-307fa14aa0c6}";
         static Mutex mutex = new Mutex(true, "{FI329DM2-DS4W-J2K2-HYES-92H21B3WJARG}");
+        private static bool requestingPrivilege = false;
         private static BackgroundWorker singleAppComThread = null;
         private static EventWaitHandle threadComEvent = null;
         public static ControlService rootHub;
@@ -40,6 +41,9 @@ namespace DS4Windows
                     Application.SetCompatibleTextRenderingDefault(false);
                     Application.Run(new WelcomeDialog());
                     return;
+                } else if (s == "requestingPrivilege" || s == "-requestingPrivilege")
+                {
+                    requestingPrivilege = true;
                 }
             }
             System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.LowLatency;
@@ -55,15 +59,33 @@ namespace DS4Windows
             {
                 // another instance is already running if OpenExsting succeeds.
                 threadComEvent = EventWaitHandle.OpenExisting(SingleAppComEventName);
-                threadComEvent.Set();  // signal the other instance.
-                threadComEvent.Close();
-                return;    // return immediatly.
+                if (requestingPrivilege)
+                {
+                    threadComEvent.WaitOne(); // Wait for other instance to end
+                    threadComEvent.Close();
+                }
+                else
+                {
+                    threadComEvent.Set();  // signal the other instance.
+                    threadComEvent.Close();
+                    return;    // return immediatly.
+                }
             }
             catch { /* don't care about errors */     }
             // Create the Event handle
             threadComEvent = new EventWaitHandle(false, EventResetMode.AutoReset, SingleAppComEventName);
             CreateInterAppComThread();
-            if (mutex.WaitOne(TimeSpan.Zero, true))
+
+            TimeSpan timeSpan;
+            if (!requestingPrivilege)
+            {
+                timeSpan = TimeSpan.Zero;
+            }
+            else
+            {
+                timeSpan = TimeSpan.FromSeconds(5);
+            }
+            if (mutex.WaitOne(timeSpan, true))
             {
                 rootHub = new ControlService();
                 Application.EnableVisualStyles();
@@ -77,6 +99,23 @@ namespace DS4Windows
             while (singleAppComThread.IsBusy)
                 Thread.Sleep(50);
             threadComEvent.Close();
+        }
+
+        public static void requestElevatedPrivileges()
+        {
+            string exeName = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+            ProcessStartInfo startInfo = new ProcessStartInfo(exeName);
+            startInfo.Verb = "runas";
+            startInfo.Arguments = "requestingPrivilege";
+            Process.Start(startInfo);
+            requestingPrivilege = true;
+            mutex.ReleaseMutex();
+            singleAppComThread.CancelAsync();
+            while (singleAppComThread.IsBusy)
+                Thread.Sleep(50);
+            threadComEvent.Set();
+            threadComEvent.Close();
+            Application.Exit();
         }
 
         static private void CreateInterAppComThread()

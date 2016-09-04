@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
-using System.Text;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
 
 namespace DS4Windows
 {
@@ -10,6 +12,71 @@ namespace DS4Windows
         private static Dictionary<string, DS4Device> Devices = new Dictionary<string, DS4Device>();
         private static HashSet<String> DevicePaths = new HashSet<String>();
         public static bool isExclusiveMode = false;
+
+        private static string devicePathToInstanceId(string devicePath)
+        {
+            string deviceInstanceId = devicePath;
+            deviceInstanceId = deviceInstanceId.Remove(0, deviceInstanceId.LastIndexOf('\\') + 1);
+            deviceInstanceId = deviceInstanceId.Remove(deviceInstanceId.LastIndexOf('{'));
+            deviceInstanceId = deviceInstanceId.Replace('#', '\\');
+            if (deviceInstanceId.EndsWith("\\"))
+            {
+                deviceInstanceId = deviceInstanceId.Remove(deviceInstanceId.Length - 1);
+            }
+            return deviceInstanceId;
+        }
+
+        // Requires admin privilege
+        private static void reEnableDevice(HidDevice device)
+        {
+            bool success;
+            Guid hidGuid = new Guid();
+            NativeMethods.HidD_GetHidGuid(ref hidGuid);
+            string deviceInstanceId = devicePathToInstanceId(device.DevicePath);
+            IntPtr deviceInfoSet = NativeMethods.SetupDiGetClassDevs(ref hidGuid, deviceInstanceId, 0, NativeMethods.DIGCF_PRESENT | NativeMethods.DIGCF_DEVICEINTERFACE);
+            NativeMethods.SP_DEVINFO_DATA deviceInfoData = new NativeMethods.SP_DEVINFO_DATA();
+            deviceInfoData.cbSize = Marshal.SizeOf(deviceInfoData);
+            success = NativeMethods.SetupDiEnumDeviceInfo(deviceInfoSet, 0, ref deviceInfoData);
+            if (!success)
+            {
+                throw new Exception("Error getting device info data, error code = " + Marshal.GetLastWin32Error());
+            }
+            success = NativeMethods.SetupDiEnumDeviceInfo(deviceInfoSet, 1, ref deviceInfoData); // Checks that we have a unique device
+            if (success)
+            {
+                throw new Exception("Can't find unique device");
+            }
+
+            NativeMethods.SP_PROPCHANGE_PARAMS propChangeParams = new NativeMethods.SP_PROPCHANGE_PARAMS();
+            propChangeParams.classInstallHeader.cbSize = Marshal.SizeOf(propChangeParams.classInstallHeader);
+            propChangeParams.classInstallHeader.installFunction = NativeMethods.DIF_PROPERTYCHANGE;
+            propChangeParams.stateChange = NativeMethods.DICS_DISABLE;
+            propChangeParams.scope = NativeMethods.DICS_FLAG_GLOBAL;
+            propChangeParams.hwProfile = 0;
+            success = NativeMethods.SetupDiSetClassInstallParams(deviceInfoSet, ref deviceInfoData, ref propChangeParams, Marshal.SizeOf(propChangeParams));
+            if (!success)
+            {
+                throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
+            }
+            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
+            if (!success)
+            {
+                throw new Exception("Error disabling device, error code = " + Marshal.GetLastWin32Error());
+            }
+            propChangeParams.stateChange = NativeMethods.DICS_ENABLE;
+            success = NativeMethods.SetupDiSetClassInstallParams(deviceInfoSet, ref deviceInfoData, ref propChangeParams, Marshal.SizeOf(propChangeParams));
+            if (!success)
+            {
+                throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
+            }
+            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
+            if (!success)
+            {
+                throw new Exception("Error enabling device, error code = " + Marshal.GetLastWin32Error());
+            }
+
+            NativeMethods.SetupDiDestroyDeviceInfoList(deviceInfoSet);
+        }
 
         //enumerates ds4 controllers in the system
         public static void findControllers()
@@ -28,6 +95,27 @@ namespace DS4Windows
                     if (!hDevice.IsOpen)
                     {
                         hDevice.OpenDevice(isExclusiveMode);
+                        if (!hDevice.IsOpen && isExclusiveMode)
+                        {
+                            WindowsIdentity identity = WindowsIdentity.GetCurrent();
+                            WindowsPrincipal principal = new WindowsPrincipal(identity);
+                            bool elevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
+                            if (!elevated)
+                            {
+                                try
+                                {
+                                    Program.requestElevatedPrivileges();
+                                    return;
+                                } catch (Exception) { }
+                            }
+                            try    
+                            {
+                                reEnableDevice(hDevice);
+                                hDevice.OpenDevice(isExclusiveMode);
+                            }
+                            catch (Exception) { }
+                        }
+                        
                         // TODO in exclusive mode, try to hold both open when both are connected
                         if (isExclusiveMode && !hDevice.IsOpen)
                             hDevice.OpenDevice(false);
