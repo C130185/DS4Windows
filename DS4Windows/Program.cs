@@ -45,7 +45,7 @@ namespace DS4Windows
                 {
                     i++;
                     string deviceInstanceId = args[i];
-                    reEnableDevice(deviceInstanceId);
+                    DS4Devices.reEnableDevice(deviceInstanceId);
                     return;
                 }
             }
@@ -85,56 +85,6 @@ namespace DS4Windows
             while (singleAppComThread.IsBusy)
                 Thread.Sleep(50);
             threadComEvent.Close();
-        }
-
-        public static void reEnableDevice(string deviceInstanceId)
-        {
-            bool success;
-            Guid hidGuid = new Guid();
-            NativeMethods.HidD_GetHidGuid(ref hidGuid);
-            IntPtr deviceInfoSet = NativeMethods.SetupDiGetClassDevs(ref hidGuid, deviceInstanceId, 0, NativeMethods.DIGCF_PRESENT | NativeMethods.DIGCF_DEVICEINTERFACE);
-            NativeMethods.SP_DEVINFO_DATA deviceInfoData = new NativeMethods.SP_DEVINFO_DATA();
-            deviceInfoData.cbSize = Marshal.SizeOf(deviceInfoData);
-            success = NativeMethods.SetupDiEnumDeviceInfo(deviceInfoSet, 0, ref deviceInfoData);
-            if (!success)
-            {
-                throw new Exception("Error getting device info data, error code = " + Marshal.GetLastWin32Error());
-            }
-            success = NativeMethods.SetupDiEnumDeviceInfo(deviceInfoSet, 1, ref deviceInfoData); // Checks that we have a unique device
-            if (success)
-            {
-                throw new Exception("Can't find unique device");
-            }
-
-            NativeMethods.SP_PROPCHANGE_PARAMS propChangeParams = new NativeMethods.SP_PROPCHANGE_PARAMS();
-            propChangeParams.classInstallHeader.cbSize = Marshal.SizeOf(propChangeParams.classInstallHeader);
-            propChangeParams.classInstallHeader.installFunction = NativeMethods.DIF_PROPERTYCHANGE;
-            propChangeParams.stateChange = NativeMethods.DICS_DISABLE;
-            propChangeParams.scope = NativeMethods.DICS_FLAG_GLOBAL;
-            propChangeParams.hwProfile = 0;
-            success = NativeMethods.SetupDiSetClassInstallParams(deviceInfoSet, ref deviceInfoData, ref propChangeParams, Marshal.SizeOf(propChangeParams));
-            if (!success)
-            {
-                throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
-            }
-            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
-            if (!success)
-            {
-                throw new Exception("Error disabling device, error code = " + Marshal.GetLastWin32Error());
-            }
-            propChangeParams.stateChange = NativeMethods.DICS_ENABLE;
-            success = NativeMethods.SetupDiSetClassInstallParams(deviceInfoSet, ref deviceInfoData, ref propChangeParams, Marshal.SizeOf(propChangeParams));
-            if (!success)
-            {
-                throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
-            }
-            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
-            if (!success)
-            {
-                throw new Exception("Error enabling device, error code = " + Marshal.GetLastWin32Error());
-            }
-
-            NativeMethods.SetupDiDestroyDeviceInfoList(deviceInfoSet);
         }
 
         static private void CreateInterAppComThread()
