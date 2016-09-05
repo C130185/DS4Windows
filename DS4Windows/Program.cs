@@ -21,7 +21,6 @@ namespace DS4Windows
         // into view, of course. 
         private static String SingleAppComEventName = "{a52b5b20-d9ee-4f32-8518-307fa14aa0c6}";
         static Mutex mutex = new Mutex(true, "{FI329DM2-DS4W-J2K2-HYES-92H21B3WJARG}");
-        private static bool requestingPrivilege = false;
         private static BackgroundWorker singleAppComThread = null;
         private static EventWaitHandle threadComEvent = null;
         public static ControlService rootHub;
@@ -33,17 +32,21 @@ namespace DS4Windows
         static void Main(string[] args)
         {
             //Thread.CurrentThread.CurrentUICulture = CultureInfo.GetCultureInfo("he");
-            foreach(string s in args)
+            for (int i = 0; i < args.Length; i++)
             {
+                string s = args[i];
                 if (s == "driverinstall" || s == "-driverinstall")
                 {
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
                     Application.Run(new WelcomeDialog());
                     return;
-                } else if (s == "requestingPrivilege" || s == "-requestingPrivilege")
+                } else if (s == "re-enabledevice" || s == "-re-enabledevice")
                 {
-                    requestingPrivilege = true;
+                    i++;
+                    string deviceInstanceId = args[i];
+                    reEnableDevice(deviceInstanceId);
+                    return;
                 }
             }
             System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.LowLatency;
@@ -59,33 +62,16 @@ namespace DS4Windows
             {
                 // another instance is already running if OpenExsting succeeds.
                 threadComEvent = EventWaitHandle.OpenExisting(SingleAppComEventName);
-                if (requestingPrivilege)
-                {
-                    threadComEvent.WaitOne(); // Wait for other instance to end
-                    threadComEvent.Close();
-                }
-                else
-                {
-                    threadComEvent.Set();  // signal the other instance.
-                    threadComEvent.Close();
-                    return;    // return immediatly.
-                }
+                threadComEvent.Set();  // signal the other instance.
+                threadComEvent.Close();
+                return;    // return immediatly.
             }
             catch { /* don't care about errors */     }
             // Create the Event handle
             threadComEvent = new EventWaitHandle(false, EventResetMode.AutoReset, SingleAppComEventName);
             CreateInterAppComThread();
 
-            TimeSpan timeSpan;
-            if (!requestingPrivilege)
-            {
-                timeSpan = TimeSpan.Zero;
-            }
-            else
-            {
-                timeSpan = TimeSpan.FromSeconds(5);
-            }
-            if (mutex.WaitOne(timeSpan, true))
+            if (mutex.WaitOne(TimeSpan.Zero, true))
             {
                 rootHub = new ControlService();
                 Application.EnableVisualStyles();
@@ -101,21 +87,54 @@ namespace DS4Windows
             threadComEvent.Close();
         }
 
-        public static void requestElevatedPrivileges()
+        public static void reEnableDevice(string deviceInstanceId)
         {
-            string exeName = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
-            ProcessStartInfo startInfo = new ProcessStartInfo(exeName);
-            startInfo.Verb = "runas";
-            startInfo.Arguments = "requestingPrivilege";
-            Process.Start(startInfo);
-            requestingPrivilege = true;
-            mutex.ReleaseMutex();
-            singleAppComThread.CancelAsync();
-            while (singleAppComThread.IsBusy)
-                Thread.Sleep(50);
-            threadComEvent.Set();
-            threadComEvent.Close();
-            Application.Exit();
+            bool success;
+            Guid hidGuid = new Guid();
+            NativeMethods.HidD_GetHidGuid(ref hidGuid);
+            IntPtr deviceInfoSet = NativeMethods.SetupDiGetClassDevs(ref hidGuid, deviceInstanceId, 0, NativeMethods.DIGCF_PRESENT | NativeMethods.DIGCF_DEVICEINTERFACE);
+            NativeMethods.SP_DEVINFO_DATA deviceInfoData = new NativeMethods.SP_DEVINFO_DATA();
+            deviceInfoData.cbSize = Marshal.SizeOf(deviceInfoData);
+            success = NativeMethods.SetupDiEnumDeviceInfo(deviceInfoSet, 0, ref deviceInfoData);
+            if (!success)
+            {
+                throw new Exception("Error getting device info data, error code = " + Marshal.GetLastWin32Error());
+            }
+            success = NativeMethods.SetupDiEnumDeviceInfo(deviceInfoSet, 1, ref deviceInfoData); // Checks that we have a unique device
+            if (success)
+            {
+                throw new Exception("Can't find unique device");
+            }
+
+            NativeMethods.SP_PROPCHANGE_PARAMS propChangeParams = new NativeMethods.SP_PROPCHANGE_PARAMS();
+            propChangeParams.classInstallHeader.cbSize = Marshal.SizeOf(propChangeParams.classInstallHeader);
+            propChangeParams.classInstallHeader.installFunction = NativeMethods.DIF_PROPERTYCHANGE;
+            propChangeParams.stateChange = NativeMethods.DICS_DISABLE;
+            propChangeParams.scope = NativeMethods.DICS_FLAG_GLOBAL;
+            propChangeParams.hwProfile = 0;
+            success = NativeMethods.SetupDiSetClassInstallParams(deviceInfoSet, ref deviceInfoData, ref propChangeParams, Marshal.SizeOf(propChangeParams));
+            if (!success)
+            {
+                throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
+            }
+            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
+            if (!success)
+            {
+                throw new Exception("Error disabling device, error code = " + Marshal.GetLastWin32Error());
+            }
+            propChangeParams.stateChange = NativeMethods.DICS_ENABLE;
+            success = NativeMethods.SetupDiSetClassInstallParams(deviceInfoSet, ref deviceInfoData, ref propChangeParams, Marshal.SizeOf(propChangeParams));
+            if (!success)
+            {
+                throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
+            }
+            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
+            if (!success)
+            {
+                throw new Exception("Error enabling device, error code = " + Marshal.GetLastWin32Error());
+            }
+
+            NativeMethods.SetupDiDestroyDeviceInfoList(deviceInfoSet);
         }
 
         static private void CreateInterAppComThread()

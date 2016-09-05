@@ -26,58 +26,6 @@ namespace DS4Windows
             return deviceInstanceId;
         }
 
-        // Requires admin privilege
-        private static void reEnableDevice(HidDevice device)
-        {
-            bool success;
-            Guid hidGuid = new Guid();
-            NativeMethods.HidD_GetHidGuid(ref hidGuid);
-            string deviceInstanceId = devicePathToInstanceId(device.DevicePath);
-            IntPtr deviceInfoSet = NativeMethods.SetupDiGetClassDevs(ref hidGuid, deviceInstanceId, 0, NativeMethods.DIGCF_PRESENT | NativeMethods.DIGCF_DEVICEINTERFACE);
-            NativeMethods.SP_DEVINFO_DATA deviceInfoData = new NativeMethods.SP_DEVINFO_DATA();
-            deviceInfoData.cbSize = Marshal.SizeOf(deviceInfoData);
-            success = NativeMethods.SetupDiEnumDeviceInfo(deviceInfoSet, 0, ref deviceInfoData);
-            if (!success)
-            {
-                throw new Exception("Error getting device info data, error code = " + Marshal.GetLastWin32Error());
-            }
-            success = NativeMethods.SetupDiEnumDeviceInfo(deviceInfoSet, 1, ref deviceInfoData); // Checks that we have a unique device
-            if (success)
-            {
-                throw new Exception("Can't find unique device");
-            }
-
-            NativeMethods.SP_PROPCHANGE_PARAMS propChangeParams = new NativeMethods.SP_PROPCHANGE_PARAMS();
-            propChangeParams.classInstallHeader.cbSize = Marshal.SizeOf(propChangeParams.classInstallHeader);
-            propChangeParams.classInstallHeader.installFunction = NativeMethods.DIF_PROPERTYCHANGE;
-            propChangeParams.stateChange = NativeMethods.DICS_DISABLE;
-            propChangeParams.scope = NativeMethods.DICS_FLAG_GLOBAL;
-            propChangeParams.hwProfile = 0;
-            success = NativeMethods.SetupDiSetClassInstallParams(deviceInfoSet, ref deviceInfoData, ref propChangeParams, Marshal.SizeOf(propChangeParams));
-            if (!success)
-            {
-                throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
-            }
-            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
-            if (!success)
-            {
-                throw new Exception("Error disabling device, error code = " + Marshal.GetLastWin32Error());
-            }
-            propChangeParams.stateChange = NativeMethods.DICS_ENABLE;
-            success = NativeMethods.SetupDiSetClassInstallParams(deviceInfoSet, ref deviceInfoData, ref propChangeParams, Marshal.SizeOf(propChangeParams));
-            if (!success)
-            {
-                throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
-            }
-            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
-            if (!success)
-            {
-                throw new Exception("Error enabling device, error code = " + Marshal.GetLastWin32Error());
-            }
-
-            NativeMethods.SetupDiDestroyDeviceInfoList(deviceInfoSet);
-        }
-
         //enumerates ds4 controllers in the system
         public static void findControllers()
         {
@@ -97,21 +45,34 @@ namespace DS4Windows
                         hDevice.OpenDevice(isExclusiveMode);
                         if (!hDevice.IsOpen && isExclusiveMode)
                         {
-                            WindowsIdentity identity = WindowsIdentity.GetCurrent();
-                            WindowsPrincipal principal = new WindowsPrincipal(identity);
-                            bool elevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
-                            if (!elevated)
+                            try
                             {
-                                try
+                                WindowsIdentity identity = WindowsIdentity.GetCurrent();
+                                WindowsPrincipal principal = new WindowsPrincipal(identity);
+                                bool elevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
+
+                                if (!elevated)
                                 {
-                                    Program.requestElevatedPrivileges();
-                                    return;
-                                } catch (Exception) { }
-                            }
-                            try    
-                            {
-                                reEnableDevice(hDevice);
-                                hDevice.OpenDevice(isExclusiveMode);
+                                    // Launches an elevated child process to re-enable device
+                                    string exeName = Process.GetCurrentProcess().MainModule.FileName;
+                                    ProcessStartInfo startInfo = new ProcessStartInfo(exeName);
+                                    startInfo.Verb = "runas";
+                                    startInfo.Arguments = "re-enabledevice " + devicePathToInstanceId(hDevice.DevicePath);
+                                    Process child = Process.Start(startInfo);
+                                    if (!child.WaitForExit(5000))
+                                    {
+                                        child.Kill();
+                                    }
+                                    else if (child.ExitCode == 0)
+                                    {
+                                        hDevice.OpenDevice(isExclusiveMode);
+                                    }
+                                }
+                                else
+                                {
+                                    Program.reEnableDevice(devicePathToInstanceId(hDevice.DevicePath));
+                                    hDevice.OpenDevice(isExclusiveMode);
+                                }
                             }
                             catch (Exception) { }
                         }
