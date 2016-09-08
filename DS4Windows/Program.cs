@@ -43,10 +43,19 @@ namespace DS4Windows
                     return;
                 } else if (s == "re-enabledevice" || s == "-re-enabledevice")
                 {
-                    i++;
-                    string deviceInstanceId = args[i];
-                    DS4Devices.reEnableDevice(deviceInstanceId);
-                    return;
+                    try
+                    {
+                        i++;
+                        string deviceInstanceId = args[i];
+                        DS4Devices.reEnableDevice(deviceInstanceId);
+                        Environment.ExitCode = 0;
+                        return;
+                    }
+                    catch (Exception)
+                    {
+                        Environment.ExitCode = Marshal.GetLastWin32Error();
+                        return;
+                    }
                 }
             }
             System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.LowLatency;
