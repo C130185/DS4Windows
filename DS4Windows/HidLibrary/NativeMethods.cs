@@ -263,7 +263,7 @@ namespace DS4Windows
         static internal extern bool SetupDiSetClassInstallParams(IntPtr deviceInfoSet, ref SP_DEVINFO_DATA deviceInfoData, ref SP_PROPCHANGE_PARAMS classInstallParams, int classInstallParamsSize);
 
         [DllImport("setupapi.dll", CharSet = CharSet.Auto)]
-        static internal extern bool SetupDiChangeState(IntPtr deviceInfoSet, ref SP_DEVINFO_DATA deviceInfoData);
+        static internal extern bool SetupDiCallClassInstaller(int installFunction, IntPtr deviceInfoSet, ref SP_DEVINFO_DATA deviceInfoData);
 
         [DllImport("setupapi.dll", CharSet = CharSet.Auto)]
         static internal extern bool SetupDiGetDeviceInstanceId(IntPtr deviceInfoSet, ref SP_DEVINFO_DATA deviceInfoData, char[] deviceInstanceId, Int32 deviceInstanceIdSize, ref int requiredSize);

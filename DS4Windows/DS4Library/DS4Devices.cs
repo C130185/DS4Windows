@@ -183,7 +183,7 @@ namespace DS4Windows
             {
                 throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
             }
-            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
+            success = NativeMethods.SetupDiCallClassInstaller(NativeMethods.DIF_PROPERTYCHANGE, deviceInfoSet, ref deviceInfoData);
             if (!success)
             {
                 throw new Exception("Error disabling device, error code = " + Marshal.GetLastWin32Error());
@@ -194,7 +194,7 @@ namespace DS4Windows
             {
                 throw new Exception("Error setting class install params, error code = " + Marshal.GetLastWin32Error());
             }
-            success = NativeMethods.SetupDiChangeState(deviceInfoSet, ref deviceInfoData);
+            success = NativeMethods.SetupDiCallClassInstaller(NativeMethods.DIF_PROPERTYCHANGE, deviceInfoSet, ref deviceInfoData);
             if (!success)
             {
                 throw new Exception("Error enabling device, error code = " + Marshal.GetLastWin32Error());
